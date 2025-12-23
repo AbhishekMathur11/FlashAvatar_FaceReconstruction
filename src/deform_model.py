@@ -85,7 +85,7 @@ class Deform_Model(nn.Module):
         uv_vertices_shape = uv_vertices_shape_flaten[self.uvmask_flaten_idx].unsqueeze(0)
 
         self.uv_vertices_shape = uv_vertices_shape # for cano init
-        self.uv_vertices_shape_embeded = self.pts_embedder(uv_vertices_shape)
+        self.uv_vertices_shape_embeded = self.pts_embedder(uv_vertices_shape).to(self.device)
         self.v_num = self.uv_vertices_shape_embeded.shape[1]
 
         # mask
@@ -96,17 +96,17 @@ class Deform_Model(nn.Module):
         )
     
     def decode(self, codedict):
-        shape_code = codedict['shape'].detach()
-        expr_code = codedict['expr'].detach()
-        jaw_pose = codedict['jaw_pose'].detach()
-        eyelids = codedict['eyelids'].detach()
-        eyes_pose = codedict['eyes_pose'].detach()
+        shape_code = codedict['shape'].detach().to(self.device)
+        expr_code = codedict['expr'].detach().to(self.device)
+        jaw_pose = codedict['jaw_pose'].detach().to(self.device)
+        eyelids = codedict['eyelids'].detach().to(self.device)
+        eyes_pose = codedict['eyes_pose'].detach().to(self.device)
         batch_size = shape_code.shape[0]
         condition = torch.cat((expr_code, jaw_pose, eyes_pose, eyelids), dim=1)
 
-        # MLP
+        # MLP - ensure all tensors are on the same device
         condition = condition.unsqueeze(1).repeat(1, self.v_num, 1)
-        uv_vertices_shape_embeded_condition = torch.cat((self.uv_vertices_shape_embeded, condition), dim=2)
+        uv_vertices_shape_embeded_condition = torch.cat((self.uv_vertices_shape_embeded.to(self.device), condition), dim=2)
         deforms = self.deformNet(uv_vertices_shape_embeded_condition)
         deforms = torch.tanh(deforms)
         uv_vertices_deforms = deforms[..., :3]

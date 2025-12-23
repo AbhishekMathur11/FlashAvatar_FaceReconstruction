@@ -11,7 +11,7 @@
 
 import torch
 import numpy as np
-from utils.general_utils import inverse_sigmoid, get_expon_lr_func, build_rotation
+from utils.general_utils import inverse_sigmoid, get_expon_lr_func, build_rotation, quaternion2rotmat, normal2rotation
 from torch import nn
 import os
 from utils.system_utils import mkdir_p
@@ -119,16 +119,36 @@ class GaussianModel:
     def get_covariance(self, scaling_modifier = 1):
         return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
 
+    @property
+    def get_normal(self):
+        """Extract normal from rotation matrix (3rd column).
+        This represents the surface normal direction for surfel-based gaussians."""
+        return quaternion2rotmat(self.get_rotation)[..., 2]
+
     def oneupSHdegree(self):
         if self.active_sh_degree < self.max_sh_degree:
             self.active_sh_degree += 1
 
-    def create_from_verts(self, points):
+    def create_from_verts(self, points, normals=None, use_surfels=False):
+        """Create gaussians from vertices.
+        
+        Args:
+            points: vertex positions [N, 3]
+            normals: optional vertex normals [N, 3] for surfel initialization
+            use_surfels: if True, initialize as surfels (squeeze z-scaling, align rotations to normals)
+        """
         features = torch.zeros((points.shape[0], 3, (self.max_sh_degree + 1) ** 2)).float().cuda()
         dist2 = torch.clamp_min(distCUDA2(points), 0.0000001)
         scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
-        rots = torch.zeros((points.shape[0], 4), device="cuda")
-        rots[:, 0] = 1
+        
+        if use_surfels and normals is not None:
+            # Initialize as surfels: align rotation to normal, squeeze z-scaling
+            rots = normal2rotation(torch.tensor(normals, dtype=torch.float32, device="cuda"))
+            scales[..., -1] -= 1e10  # Squeeze z-scaling to make them nearly planar
+        else:
+            # Standard initialization
+            rots = torch.zeros((points.shape[0], 4), device="cuda")
+            rots[:, 0] = 1
 
         opacities = inverse_sigmoid(0.1 * torch.ones((points.shape[0], 1), dtype=torch.float, device="cuda"))
 

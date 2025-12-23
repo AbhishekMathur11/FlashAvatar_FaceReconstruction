@@ -37,11 +37,13 @@ class Camera(nn.Module):
             print(f"[Warning] Custom device {data_device} failed, fallback to default cuda device" )
             self.data_device = torch.device("cuda")
 
-        self.original_image = image.clamp(0.0, 1.0).to(self.data_device)
+        # Store images on CPU to save GPU memory, move to GPU only when needed
+        self.original_image = image.clamp(0.0, 1.0).cpu()
         self.image_width = self.original_image.shape[2]
         self.image_height = self.original_image.shape[1]
-        self.head_mask = head_mask.to(self.data_device)
-        self.mouth_mask = mouth_mask.to(self.data_device)
+        self.head_mask = head_mask.cpu()
+        self.mouth_mask = mouth_mask.cpu()
+        # Keep small tensors on GPU
         self.exp_param = exp_param.to(self.data_device)
         self.eyes_pose = eyes_pose.to(self.data_device)
         self.eyelids = eyelids.to(self.data_device)

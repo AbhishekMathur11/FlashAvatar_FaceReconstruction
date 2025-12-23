@@ -54,7 +54,8 @@ if __name__ == "__main__":
     ## dataloader
     data_dir = os.path.join('dataset', args.idname)
     mica_datadir = os.path.join('metrical-tracker/output', args.idname)
-    logdir = data_dir+'/'+args.logname
+    logdir = os.path.join(data_dir, args.logname)
+    os.makedirs(logdir, exist_ok=True)
     scene = Scene_mica(data_dir, mica_datadir, train_type=1, white_background=lpt.white_background, device = args.device)
     
     first_iter = 0
@@ -72,6 +73,8 @@ if __name__ == "__main__":
     fourcc = cv2.VideoWriter_fourcc(*'XVID')
     vid_save_path = os.path.join(logdir, 'test.avi')
     out = cv2.VideoWriter(vid_save_path, fourcc, 25, (args.image_res*2, args.image_res), True)
+    if not out.isOpened():
+        raise RuntimeError(f"Failed to open video writer at {vid_save_path}")
 
     viewpoint = scene.getCameras().copy()
     codedict = {}

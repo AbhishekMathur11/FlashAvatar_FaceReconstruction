@@ -11,7 +11,7 @@ from scene import GaussianModel, Scene_mica
 from src.deform_model import Deform_Model
 from gaussian_renderer import render
 from arguments import ModelParams, PipelineParams, OptimizationParams
-from utils.loss_utils import huber_loss
+from utils.loss_utils import huber_loss, cos_loss, normal_smoothness_loss
 from utils.general_utils import normalize_for_percep
 
 
@@ -62,7 +62,12 @@ if __name__ == "__main__":
     os.makedirs(log_dir, exist_ok=True)
     os.makedirs(train_dir, exist_ok=True)
     os.makedirs(model_dir, exist_ok=True)
-    scene = Scene_mica(data_dir, mica_datadir, train_type=0, white_background=lpt.white_background, device = args.device)
+    
+    # Clear GPU cache before loading scene
+    torch.cuda.empty_cache()
+    scene = Scene_mica(data_dir, mica_datadir, train_type=0, white_background=lpt.white_background, device = "cpu")
+    # Clear cache after loading
+    torch.cuda.empty_cache()
     
     first_iter = 0
     gaussians = GaussianModel(lpt.sh_degree)
@@ -78,6 +83,9 @@ if __name__ == "__main__":
     codedict = {}
     codedict['shape'] = scene.shape_param.to(args.device)
     DeformModel.example_init(codedict)
+    
+    # Ensure shape_param is on GPU for future use
+    scene.shape_param = scene.shape_param.to(args.device)
 
     viewpoint_stack = None
     first_iter += 1
@@ -112,22 +120,34 @@ if __name__ == "__main__":
         render_pkg = render(viewpoint_cam, gaussians, ppt, background)
         image = render_pkg["render"]
 
-        # Loss
-        gt_image = viewpoint_cam.original_image
-        mouth_mask = viewpoint_cam.mouth_mask
+        # Loss - move images to GPU only when needed
+        gt_image = viewpoint_cam.original_image.to(args.device)
+        mouth_mask = viewpoint_cam.mouth_mask.to(args.device)
         
         loss_huber = huber_loss(image, gt_image, 0.1) + 40*huber_loss(image*mouth_mask, gt_image*mouth_mask, 0.1)
         
         loss_G = 0.
-        head_mask = viewpoint_cam.head_mask
+        head_mask = viewpoint_cam.head_mask.to(args.device)
         image_percep = normalize_for_percep(image*head_mask)
         gt_image_percep = normalize_for_percep(gt_image*head_mask)
         if iteration>mid_num:
             loss_G = torch.mean(percep_module.forward(image_percep, gt_image_percep))*0.05
 
-        loss = loss_huber*1 + loss_G*1
+        # Normal alignment loss for surfel-based gaussians
+        # This encourages smooth normal fields for better surface reconstruction
+        # Note: For full depth-based normal alignment, you would need the modified rasterizer from gaussian_surfels
+        loss_normal = torch.tensor(0.0, device=args.device)
+        if iteration > 1000:  # Start normal loss after initial optimization
+            loss_normal = normal_smoothness_loss(gaussians, k=8)
+
+        loss = loss_huber*1 + loss_G*1 + 0.01 * loss_normal
 
         loss.backward()
+
+        # Clear CPU tensors from GPU after use
+        del gt_image, mouth_mask, head_mask
+        if iteration % 100 == 0:
+            torch.cuda.empty_cache()
 
         with torch.no_grad():
             # Optimizer step
@@ -140,19 +160,28 @@ if __name__ == "__main__":
             # print loss
             if iteration % 500 == 0:
                 if iteration<=mid_num:
-                    print("step: %d, huber: %.5f" %(iteration, loss_huber.item()))
+                    if iteration > 1000:
+                        print("step: %d, huber: %.5f, normal: %.5f" %(iteration, loss_huber.item(), loss_normal.item()))
+                    else:
+                        print("step: %d, huber: %.5f" %(iteration, loss_huber.item()))
                 else:
-                    print("step: %d, huber: %.5f, percep: %.5f" %(iteration, loss_huber.item(), loss_G.item()))
+                    if iteration > 1000:
+                        print("step: %d, huber: %.5f, percep: %.5f, normal: %.5f" %(iteration, loss_huber.item(), loss_G.item(), loss_normal.item()))
+                    else:
+                        print("step: %d, huber: %.5f, percep: %.5f" %(iteration, loss_huber.item(), loss_G.item()))
             
             # visualize results
             if iteration % 500 == 0 or iteration==1:
+                # Get fresh copy of gt_image for saving
+                gt_image_save = viewpoint_cam.original_image.to(args.device)
                 save_image = np.zeros((args.image_res, args.image_res*2, 3))
-                gt_image_np = (gt_image*255.).permute(1,2,0).detach().cpu().numpy().astype(np.uint8)
+                gt_image_np = (gt_image_save*255.).permute(1,2,0).detach().cpu().numpy().astype(np.uint8)
                 image = image.clamp(0, 1)
                 image_np = (image*255.).permute(1,2,0).detach().cpu().numpy().astype(np.uint8)
                 save_image[:, :args.image_res, :] = gt_image_np
                 save_image[:, args.image_res:, :] = image_np
                 cv2.imwrite(os.path.join(train_dir, f"{iteration}.jpg"), save_image[:,:,[2,1,0]])
+                del gt_image_save
             
             # save checkpoint
             if iteration % 5000 == 0:

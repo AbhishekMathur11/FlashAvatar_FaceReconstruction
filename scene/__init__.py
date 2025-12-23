@@ -94,13 +94,20 @@ class Scene_mica:
             mouth_mask_path = os.path.join(parsing_folder, image_name_ori+'_mouth.png')
             mouth_mask = Image.open(mouth_mask_path)
             mouth_mask = PILtoTensor(mouth_mask)
+            
+            # Keep images on CPU, clear intermediate tensors
+            del alpha, resized_image_rgb
 
             camera_indiv = Camera(colmap_id=frame_id, R=R, T=T, 
                                 FoVx=FovX, FoVy=FovY, 
                                 image=gt_image, head_mask=head_mask, mouth_mask=mouth_mask,
                                 exp_param=exp_param, eyes_pose=eyes_pose, eyelids=eyelids, jaw_pose=jaw_pose,
-                                image_name=image_name_mica, uid=frame_id, data_device=device)
+                                image_name=image_name_mica, uid=frame_id, data_device="cpu")
             self.cameras.append(camera_indiv)
+            
+            # Clear GPU cache periodically during loading
+            if frame_id % 100 == 0:
+                torch.cuda.empty_cache()
     
     def getCameras(self):
         return self.cameras

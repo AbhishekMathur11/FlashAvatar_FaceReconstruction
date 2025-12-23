@@ -159,6 +159,44 @@ def quatProduct_batch(q1, q2):
 
     return q
 
+def quaternion2rotmat(q):
+    """Convert quaternion to rotation matrix"""
+    r, x, y, z = q.split(1, -1)
+    R = torch.stack([
+        1 - 2 * (y * y + z * z), 2 * (x * y - r * z), 2 * (x * z + r * y),
+        2 * (x * y + r * z), 1 - 2 * (x * x + z * z), 2 * (y * z - r * x),
+        2 * (x * z - r * y), 2 * (y * z + r * x), 1 - 2 * (x * x + y * y)
+    ], -1).reshape([len(q), 3, 3])
+    return R
+
+def normal2rotation(n):
+    """Construct a rotation matrix from a normal vector.
+    The normal will be the 3rd column (z-axis) of the rotation matrix."""
+    n = torch.nn.functional.normalize(n, dim=-1)
+    w0 = torch.tensor([[1, 0, 0]], device=n.device, dtype=n.dtype).expand(n.shape)
+    R0 = w0 - torch.sum(w0 * n, -1, True) * n
+    R0 *= torch.sign(R0[:, :1])
+    R0 = torch.nn.functional.normalize(R0, dim=-1)
+    R1 = torch.cross(n, R0, dim=-1)
+    R1 *= torch.sign(R1[:, 1:2]) * torch.sign(n[:, 2:])
+    R = torch.stack([R0, R1, n], -1)
+    q = rotmat2quaternion(R)
+    return q
+
+def rotmat2quaternion(R, normalize=False):
+    """Convert rotation matrix to quaternion"""
+    tr = R[:, 0, 0] + R[:, 1, 1] + R[:, 2, 2] + 1e-6
+    r = torch.sqrt(1 + tr) / 2
+    q = torch.stack([
+        r,
+        (R[:, 2, 1] - R[:, 1, 2]) / (4 * r),
+        (R[:, 0, 2] - R[:, 2, 0]) / (4 * r),
+        (R[:, 1, 0] - R[:, 0, 1]) / (4 * r)
+    ], -1)
+    if normalize:
+        q = torch.nn.functional.normalize(q, dim=-1)
+    return q
+
 def load_binary_pickle(filepath):
     with open(filepath, 'rb') as f:
         if sys.version_info >= (3, 0):

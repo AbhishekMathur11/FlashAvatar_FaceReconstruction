@@ -46,6 +46,62 @@ def ssim(img1, img2, window_size=11, size_average=True):
 
     return _ssim(img1, img2, window, window_size, channel, size_average)
 
+def cos_loss(output, gt, thrsh=0, weight=1):
+    """Cosine loss for normal alignment.
+    
+    Args:
+        output: predicted normals [3, H, W] or [N, 3]
+        gt: ground truth normals [3, H, W] or [N, 3]
+        thrsh: threshold angle in radians (default 0, meaning no threshold)
+        weight: weight mask [H, W] or [N] (default 1, meaning uniform weight)
+    """
+    import numpy as np
+    if output.dim() == 3:  # [3, H, W] format
+        cos = torch.sum(output * gt * weight, 0)
+        return (1 - cos[cos < np.cos(thrsh)]).mean() if thrsh > 0 else (1 - cos).mean()
+    else:  # [N, 3] format
+        # Handle weight being int, tensor, or None
+        if isinstance(weight, int) or isinstance(weight, float):
+            weight_tensor = weight
+        elif hasattr(weight, 'dim'):
+            weight_tensor = weight.unsqueeze(-1) if weight.dim() == 1 else weight
+        else:
+            weight_tensor = 1.0
+        cos = torch.sum(output * gt * weight_tensor, -1)
+        return (1 - cos[cos < np.cos(thrsh)]).mean() if thrsh > 0 else (1 - cos).mean()
+
+def normal_smoothness_loss(gaussians, k=8):
+    """Compute normal smoothness loss using KNN.
+    
+    Encourages neighboring gaussians to have similar normals for surfel-based representation.
+    
+    Args:
+        gaussians: GaussianModel instance
+        k: number of nearest neighbors to consider
+    Returns:
+        loss: scalar tensor representing the smoothness loss
+    """
+    try:
+        from pytorch3d.ops import knn_points
+        xyz = gaussians.get_xyz
+        normals = gaussians.get_normal
+        
+        # Find K nearest neighbors (including self, so k+1)
+        nn_dist, nn_idx, _ = knn_points(xyz[None], xyz[None], K=k+1, return_nn=True)
+        nn_idx = nn_idx[0, :, 1:]  # Remove self, shape: [N, k]
+        nn_normals = normals[nn_idx]  # [N, k, 3]
+        
+        # Average neighbor normals
+        nn_normal_avg = torch.nn.functional.normalize(nn_normals.mean(dim=1), dim=-1)
+        
+        # Cosine loss between each gaussian's normal and average of its neighbors
+        loss = cos_loss(normals, nn_normal_avg, thrsh=0)
+        return loss
+    except ImportError:
+        # Fallback: return zero loss if pytorch3d is not available
+        # User can install pytorch3d for this functionality
+        return torch.tensor(0.0, device=gaussians.get_xyz.device, requires_grad=False)
+
 def _ssim(img1, img2, window, window_size, channel, size_average=True):
     mu1 = F.conv2d(img1, window, padding=window_size // 2, groups=channel)
     mu2 = F.conv2d(img2, window, padding=window_size // 2, groups=channel)
