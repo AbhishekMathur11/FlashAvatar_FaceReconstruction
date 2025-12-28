@@ -38,6 +38,11 @@ if __name__ == "__main__":
     parser.add_argument('--idname', type=str, default='id1_25', help='id name')
     parser.add_argument('--image_res', type=int, default=512, help='image resolution')
     parser.add_argument("--start_checkpoint", type=str, default = None)
+    parser.add_argument('--normal_loss_wt', type=float, default=0.01, help='Weight for normal smoothness loss')
+    parser.add_argument('--logname', type=str, default='log', help='log directory name (to avoid overwriting checkpoints)')
+
+
+
     args = parser.parse_args(sys.argv[1:])
     args.device = "cuda"
     lpt = lp.extract(args)
@@ -56,7 +61,7 @@ if __name__ == "__main__":
     ## dataloader
     data_dir = os.path.join('dataset', args.idname)
     mica_datadir = os.path.join('metrical-tracker/output', args.idname)
-    log_dir = os.path.join(data_dir, 'log')
+    log_dir = os.path.join(data_dir, args.logname)
     train_dir = os.path.join(log_dir, 'train')
     model_dir = os.path.join(log_dir, 'ckpt')
     os.makedirs(log_dir, exist_ok=True)
@@ -140,7 +145,7 @@ if __name__ == "__main__":
         if iteration > 1000:  # Start normal loss after initial optimization
             loss_normal = normal_smoothness_loss(gaussians, k=8)
 
-        loss = loss_huber*1 + loss_G*1 + 0.01 * loss_normal
+        loss = loss_huber*1 + loss_G*1 + args.normal_loss_wt * loss_normal
 
         loss.backward()
 
