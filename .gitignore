@@ -1,12 +1,33 @@
+# Keep dataset ignored by default
 dataset
+# But explicitly allow parent directories and results folder
+!dataset/
+!dataset/*/
+!dataset/*/res/
+!dataset/*/res/**
+
+# Keep metrical-tracker ignored
 metrical-tracker
+
+# Ignore common build/cache files
 **/__pycache__
+
+# Ignore large media files EXCEPT in results
 *avi
 *mp4
 *jpg
 *ply
+*obj
 *txt
 *sh
-flame/generic_model.pkl
-flame/FLAME_masks
+# But allow them in results
+!dataset/*/res/*.avi
+!dataset/*/res/*.ply
+!dataset/*/res/*.obj
 
+# FLAME model - uncomment if you want to push it (check license first!)
+# flame/generic_model.pkl
+
+# FLAME masks - allow these (small utility file)
+!flame/FLAME_masks/
+!flame/FLAME_masks/**
