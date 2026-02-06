@@ -14,6 +14,17 @@ from utils.general_utils import PILtoTensor
 from utils.graphics_utils import focal2fov
 
 
+def _resolve_path(folder, base_name_5digit, suffix):
+    """Resolve path trying 5-digit name then unpadded (e.g. 01901.jpg then 1901.jpg)."""
+    path = os.path.join(folder, base_name_5digit + suffix)
+    if os.path.isfile(path):
+        return path
+    path_plain = os.path.join(folder, str(int(base_name_5digit)) + suffix)
+    if os.path.isfile(path_plain):
+        return path_plain
+    return None
+
+
 class Scene_mica:
     def __init__(self, datadir, mica_datadir, train_type, white_background, device):
         ## train_type: 0 for train, 1 for test, 2 for eval
@@ -29,7 +40,12 @@ class Scene_mica:
             self.bg_image[1, :, :] = 1
 
         mica_ckpt_dir = os.path.join(mica_datadir, 'checkpoint')
-        self.N_frames = len(os.listdir(mica_ckpt_dir))
+        n_ckpt = len([f for f in os.listdir(mica_ckpt_dir) if f.endswith('.frame')])
+        n_imgs = len([f for f in os.listdir(images_folder) if f.lower().endswith(('.jpg', '.jpeg', '.png'))])
+        # Use minimum so we never request an image beyond what exists (frame_id -> image frame_id+1)
+        self.N_frames = min(n_ckpt, n_imgs)
+        if self.N_frames == 0:
+            raise FileNotFoundError("No .frame files in {} or no images in {}".format(mica_ckpt_dir, images_folder))
         self.cameras = []
         test_num = 500
         eval_num = 50
@@ -73,25 +89,25 @@ class Scene_mica:
             R = np.transpose(w2cR) # R is stored transposed due to 'glm' in CUDA code
             T = w2cT
 
-            image_path = os.path.join(images_folder, image_name_ori+'.jpg')
+            image_path = _resolve_path(images_folder, image_name_ori, '.jpg') or os.path.join(images_folder, image_name_ori+'.jpg')
             image = Image.open(image_path)
             resized_image_rgb = PILtoTensor(image)
             gt_image = resized_image_rgb[:3, ...]
             
             # alpha
-            alpha_path = os.path.join(alpha_folder, image_name_ori+'.jpg')
+            alpha_path = _resolve_path(alpha_folder, image_name_ori, '.jpg') or os.path.join(alpha_folder, image_name_ori+'.jpg')
             alpha = Image.open(alpha_path)
             alpha = PILtoTensor(alpha)
 
             # # if add head mask
-            head_mask_path = os.path.join(parsing_folder, image_name_ori+'_neckhead.png')
+            head_mask_path = _resolve_path(parsing_folder, image_name_ori, '_neckhead.png') or os.path.join(parsing_folder, image_name_ori+'_neckhead.png')
             head_mask = Image.open(head_mask_path)
             head_mask = PILtoTensor(head_mask)
             gt_image = gt_image * alpha + self.bg_image * (1 - alpha)
             gt_image = gt_image * head_mask + self.bg_image * (1 - head_mask)
 
             # mouth mask
-            mouth_mask_path = os.path.join(parsing_folder, image_name_ori+'_mouth.png')
+            mouth_mask_path = _resolve_path(parsing_folder, image_name_ori, '_mouth.png') or os.path.join(parsing_folder, image_name_ori+'_mouth.png')
             mouth_mask = Image.open(mouth_mask_path)
             mouth_mask = PILtoTensor(mouth_mask)
             
